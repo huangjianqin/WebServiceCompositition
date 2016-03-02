@@ -1,0 +1,11 @@
+Provide; ;a;0
+w1;a;b;25
+w2;a;c;30
+w3;b:c;d;40
+w4;d;e;30
+w5;e;f;20
+w6;a;g;10
+w7;g:h;v;30
+w8;t;f;50
+w9;c;e;80
+Request;f; ;0
