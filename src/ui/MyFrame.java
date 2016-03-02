@@ -199,7 +199,9 @@ public class MyFrame {
 					 	 recordRealSum.setLength(0);
 						
 						count=5000;
-								//Integer.parseInt(str1);
+						
+						//Integer.parseInt(str1);
+						
 						sumOfChangedService=Integer.parseInt(str2);
 						try {
 							testManyTimeForHJQAuto("C");
