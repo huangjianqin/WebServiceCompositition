@@ -16,9 +16,11 @@ import org.dom4j.Element;
 import org.dom4j.io.SAXReader;
 
 import com.sun.org.apache.xml.internal.resolver.helpers.PublicId;
+import com.sun.xml.internal.bind.v2.runtime.unmarshaller.LocatorEx.Snapshot;
 
 import algorithm.Change;
 import algorithm.DataGetter;
+import algorithm.PrintNetwork;
 import algorithm.StatInfo;
 import javafx.scene.chart.PieChart.Data;
 import pojo.WebService;
@@ -50,11 +52,10 @@ public class MyFrame {
 	private JFrame frame;
 	private ChooseDataSetListener  chooseDataSetListener;
 				//HJQ_比赛数据
-	private Map<String,String> map1;
-	private Map<String,List<String>> map2;
+	private Map<String,String> map1;//inst/con->con
+	private Map<String,List<String>> map2;//inst->insts
 				//HJQ_  服务name->服务
 	private Map<String,WebService> serviceMap;
-	
 	private Map<String,WebService> RPT;
 	private Map<String,List<WebService>> IIT;
 	private List<String> inputsFromChallenge;
@@ -132,9 +133,14 @@ public class MyFrame {
 	private int strategy2Value = 500;
 
 	//策略1阈值
-	private int strategy1ValueWithAD = 13;
+	private int strategy1ValueWithAD = 11;
 	//策略2阈值
-	private int strategy2ValueWithAD = 500;
+	private int strategy2ValueWithAD = 700;
+	
+	//防止有环
+	private boolean dead;
+	//画图用
+	private String typePath = "before";
 	
 	public MyFrame() throws FileNotFoundException {
 		initialize();
@@ -191,7 +197,8 @@ public class MyFrame {
 			public void actionPerformed(ActionEvent arg0) {
 				//String  str1 = JOptionPane.showInputDialog("测试多少组？");
 				//if(str1!=null){
-					String  str2 = JOptionPane.showInputDialog("变更多少个服务的qos？");
+					String  str2 = "";
+					//String  str2 = JOptionPane.showInputDialog("变更多少个服务的qos？");
 					if(str2!=null){							  
 					     recordTime1.setLength(0);
 					     recordTime2.setLength(0);
@@ -202,10 +209,10 @@ public class MyFrame {
 						
 						//Integer.parseInt(str1);
 						
-						sumOfChangedService=Integer.parseInt(str2);
+						//sumOfChangedService=Integer.parseInt(str2);
 						try {
-							testManyTimeForHJQAuto("C");
-							//testManyTimeAuto();
+							//testManyTimeForHJQAuto("B");
+							testManyTimeAuto();
 						} catch (IOException e) {
 							// TODO Auto-generated catch block
 							e.printStackTrace();
@@ -259,7 +266,7 @@ public class MyFrame {
 		btnNewButton_1.setBounds(10, 217, 93, 23);
 		frame.getContentPane().add(btnNewButton_1);
 		
-		JButton btnRun = new JButton("Run1");
+		JButton btnRun = new JButton("Run");
 		btnRun.addActionListener(new ActionListener() {
 			public void actionPerformed(ActionEvent arg0) {
 				
@@ -285,6 +292,33 @@ public class MyFrame {
 			    getOptimalWebServiceComposition(inputsFromChallenge,outputsFromChallenge,
 			    		IIT,map1,map2,RPT);
 			    System.out.println("可达的服务数:"+sumOfCanUseWS);
+			    backward(outputsFromChallenge,RPT,serviceMap);
+			    
+			    //画图用
+			    PrintNetwork.printNetwork(RPT1, IIT);
+			    PrintNetwork.printOutputsNum(RPT1, IIT);
+			    
+			    Map<String , Double> qosChanged = DataGetter.readQOSChanged();
+			    ArrayList<WebService> qosChangedList = new ArrayList<WebService>();
+			    
+			    for(String WSName: qosChanged.keySet()){
+			    	if(serviceMap.get(WSName) != null){
+			    		double all = serviceMap.get(WSName).getAllResponseTime();
+			    		double oldQOS = serviceMap.get(WSName).getSelfResponseTime();
+			    		serviceMap.get(WSName).setSelfResponseTime(qosChanged.get(WSName));
+			    		serviceMap.get(WSName).setNewAllResponseTime(all - oldQOS + qosChanged.get(WSName));
+			    		
+			    		//serv947554374			    		
+			    		qosChangedList.add(serviceMap.get(WSName));
+			    	}
+			    }
+			    
+			    //画图用,输出qos变化服务
+			    PrintNetwork.printFirstChanged(qosChangedList);
+			    
+			    continuousQuery4(qosChangedList);
+			    
+			    typePath="last";
 			    backward(outputsFromChallenge,RPT,serviceMap);
 			    
 //			    System.out.println(serviceMap.get("serv612685309").getCount()+"ppppp");
@@ -765,6 +799,7 @@ public class MyFrame {
 		// 代码构造新服务
 		Change change = new Change(testServiceList,
 				DataGetter.getServicesAllInst(testServiceList, "all"),
+				DataGetter.getServicesAllInst(testServiceList, "all"),
 				(int) StatInfo.instAverage(testServiceList, "input"),
 				(int) StatInfo.instAverage(testServiceList, "output"), 30);
 		
@@ -1089,13 +1124,12 @@ public class MyFrame {
 					}
 
 					// 在RPT中更新相应的inst
-					for (String match : DataGetter.findInstances(output, map1, map2)) {
+					for (String match : solveMap.get(output)) {
 						WebService w = RPT1.get(match);
 						// 取出RPT里面inst对应的服务w如果w==ws那么说明该服务已经被删除，需要找一个服务来代替它
 						if (ws.equals(w)) {
 							RPT1.remove(match);
-							for (String aa : DataGetter.findInstances(match, map1, map2)) {
-
+							for (String aa : solveMap.get(match)) {
 								List<WebService> updates = OT.get(aa);
 
 								// 成功找到替代的服务，将其放入RPT
@@ -1115,14 +1149,49 @@ public class MyFrame {
 		return needUpdate;
 
 	}
+	
+	public void adaptIIT(Map<String, List<WebService>> addAndDeleteMap){
+		
+		for(WebService webService: addAndDeleteMap.get("new")){
+			List<String> inputs = webService.getInputs();
+			
+			for(String input: inputs){
+				//处理IIT
+				if(IIT.containsKey(input)){
+					IIT.get(input).add(webService);
+				}
+				else{
+					List<WebService> webServices = new ArrayList<WebService>();
+					
+					webServices.add(webService);
+					
+					IIT.put(input, webServices);
+				}
+			}
+		}
+		for(WebService webService: addAndDeleteMap.get("delete")){
+			for (String input : (List<String>)webService.getInputs()) {
+				List<WebService> les = IIT.get(input);// 接收input的list
+				les.remove(webService);
+				if (les.isEmpty()) {
+					IIT.remove(input);
+				}
+			}
+		}
+	}
+	
 	/**
 	 * 测试多次实验,通过硬编码实现测5000次
 	 * @param type 是指实验的类型
 	 * @param sb 
+	 * @param realInsts 
+	 * @param allInsts 
+	 * @param experimentC 
+	 * @param experimentCC 
 	 * @throws IOException
 	 */
 	public void testManyTimeForHJQ(String type, StringBuilder sb, Map<String, List<WebService>> OTOfCopy, Map<String, List<WebService>> IITOfCopy,
-			Map<String, WebService> RPT1OfCopy) throws IOException {
+			Map<String, WebService> RPT1OfCopy, List<String> allInsts, List<String> realInsts, Map<Integer, List<Double>> experimentCC, Map<Integer, List<Double>> experimentCR) throws IOException {
 		requeryTime = 0;
 		continueTime = 0;
 		
@@ -1131,6 +1200,7 @@ public class MyFrame {
 		
 		int time = 0;
 		while (time < count) {
+			this.dead = false;
 			time++;
 			if(time%1000 == 0){
 				System.out.println("第" + time + "组");
@@ -1168,8 +1238,10 @@ public class MyFrame {
 			}
 			
 			// HJQ randomTest();
-			randomTestForHJQ(testServiceList, OTOfCopy, IITOfCopy, RPT1OfCopy);
-			
+			randomTestForHJQ(type, testServiceList, OTOfCopy, IITOfCopy, RPT1OfCopy, allInsts, realInsts, experimentCC, experimentCR);
+			if(dead){
+				time--;
+			}
 		}
 
 		// cjh add
@@ -1210,10 +1282,24 @@ public class MyFrame {
 		// 复制RPT1和serviceMap
 		copy();
 		
-		int[] testGroup = new int[]{50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800};
+		//所有inst
+		List<String> allInsts = new ArrayList<String>();
+		for(String instAndCon: map1.keySet()){
+			if(instAndCon.contains("inst")){
+				allInsts.add(instAndCon);
+			}
+		}
+		
+		//所有RPT1中的inst,就是说随机生成的新服务肯定会影响当前网络结构
+		List<String > realInsts = new ArrayList<String>();
+		realInsts.addAll(RPT1.keySet());
+		
+		
+		int[] testGroup = null;
 		
 		if(type.equals("B")){
-			testGroup = new int[]{50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800};
+			//50,100,150
+			testGroup = new int[]{50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000};
 		}
 		else if(type.equals("C")){
 			testGroup = new int[]{2,4,6,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23};
@@ -1221,46 +1307,108 @@ public class MyFrame {
 		
 		//记录所有实验时间
 		StringBuilder sb = new StringBuilder();
+		//跑实验B同时跑实验C----记录实验C中的实验B结果
+		//跑实验B同时跑实验C----记录实验C中的实验C结果
+		Map<Integer, List<Double>> experimentCC = new HashMap<Integer, List<Double>>();
+		Map<Integer, List<Double>> experimentCR = new HashMap<Integer, List<Double>>();
 		
 		for(int i = 0; i < testGroup.length; i++){
 			System.out.print("实验" + type + ":");
 			System.out.println(testGroup[i]);
 			
 			this.sumOfChangedService = testGroup[i];
-			testManyTimeForHJQ(type, sb, OTOfCopy, IITOfCopy, RPT1OfCopy);
+			testManyTimeForHJQ(type, sb, OTOfCopy, IITOfCopy, RPT1OfCopy, allInsts, realInsts, experimentCC, experimentCR);
 		}
 		
 		out1 = new FileOutputStream("result" + type + ".csv");
 		out1.write(sb.toString().getBytes());
 		out1.close();
+		
+		//记录实验C中的实验信息
+		StringBuilder sc = new StringBuilder();
+		
+		//处理实验C的连续查询实验结果-----------------------------------------------------------------
+		for(Integer key : experimentCC.keySet()){
+			double sum = 0;
+			int num = experimentCC.get(key).size();
+			
+			for(Double result : experimentCC.get(key)){
+				sum += result;
+			}
+			
+			sc.append(key + "," + sum/num + "," + num + System.lineSeparator());
+			
+		}
+		
+		out1 = new FileOutputStream("resultCC.csv");
+		out1.write(sc.toString().getBytes());
+		out1.close();
+		
+		//初始化
+		sc = new StringBuilder();
+
+		// 处理实验C的重查实验结果-----------------------------------------------------------------
+		for (Integer key : experimentCR.keySet()) {
+			double sum = 0;
+			int num = experimentCR.get(key).size();
+
+			for (Double result : experimentCR.get(key)) {
+				sum += result;
+			}
+
+			sc.append(key + "," + sum / num + "," + num + System.lineSeparator());
+
+		}
+
+		out1 = new FileOutputStream("resultCR.csv");
+		out1.write(sc.toString().getBytes());
+		out1.close();
+
 	}
 	
 	/**
 	 * 一组实验,删除新增和qos改变三种一起上的测试
+	 * @param type 
 	 * @param rPT1OfCopy 
 	 * @param IITOfCopy 
 	 * @param OTOfCopy 
 	 * @param RPT1OfCopy 
+	 * @param allInsts 
+	 * @param realInsts 
+	 * @param experimentC 
+	 * @param experimentCC 
 	 * @param iITOfCopy 
 	 * @param oTOfCopy 
 	 */
-	public void randomTestForHJQ(List<WebService> testServiceList, Map<String, List<WebService>> OTOfCopy, Map<String, List<WebService>> IITOfCopy,
-			Map<String, WebService> RPT1OfCopy) {
+	public void randomTestForHJQ(String type, List<WebService> testServiceList, Map<String, List<WebService>> OTOfCopy, Map<String, List<WebService>> IITOfCopy,
+			Map<String, WebService> RPT1OfCopy, List<String> allInsts, List<String> realInsts, Map<Integer, List<Double>> experimentCC, Map<Integer, List<Double>> experimentCR) {
 		// HJQ_所有变化的服务
 		List<WebService> qosChangedList = new ArrayList<WebService>();
 		// HJQ_qosChangedList的副本,即qos发生变化的服务
 		List<WebService> copyChangedList = new ArrayList<WebService>();
 		
-		Change change = new Change(testServiceList, DataGetter.getServicesAllInst(testServiceList, "all"),
+		//根据不同的实验取不同的inst集
+		List<String> experimentNeed = null;
+		
+		if(type.equals("B")){
+			experimentNeed = allInsts;
+		}
+		else if(type.equals("C")){
+			experimentNeed = realInsts;
+		}
+		
+		Change change = new Change(testServiceList, experimentNeed, allInsts, 
 				(int) StatInfo.instAverage(testServiceList, "input"),
 				(int) StatInfo.instAverage(testServiceList, "output"), 30);
 		
-		int typeNumber = 3;
+		//比例
+		int typeNumber = 5;
 		
+		//1:1:3
 		int sum = sumOfChangedService;
 		int deletedWSSum = sum / typeNumber;
 		int addWSSum = sum / typeNumber;
-		int changedWSSum = changedWSSum = (sum % typeNumber == 0) ? sum / typeNumber : sum / typeNumber + sum % typeNumber;
+		int changedWSSum = changedWSSum = (sum % typeNumber == 0) ? (sum / typeNumber * 3) : (sum / typeNumber * 3) + sum % typeNumber;
 		
 		Map<String, List<WebService>> changedMap = change.changeWebServices(sum, addWSSum, changedWSSum,
 				deletedWSSum);
@@ -1270,14 +1418,47 @@ public class MyFrame {
 			WebService newWS = null;
 			try {
 				newWS = (WebService) webService.clone();
-			} catch (CloneNotSupportedException e) {
+			} catch (CloneNotSupportedException e) { 
 				e.printStackTrace();
 			}
 			copyChangedList.add(newWS);
 		}
 		
 		//复制发生变化的服务
-		Map<String, List<WebService>> changedMapOfCopy = copyChangedMap(changedMap);		
+		Map<String, List<WebService>> changedMapOfCopy = copyChangedMap(changedMap);
+		
+		//统计实际的数量
+		//跑实验B同时统计实验C
+		this.realSum = 0;
+		
+		for(WebService webService : changedMap.get("qosChange")){
+			if(webService.getCount() == 0){
+				this.realSum ++;
+			}
+		}
+		
+		for(WebService webService : changedMap.get("delete")){
+			if(webService.getCount() == 0){
+				this.realSum ++;
+			}
+		}
+		
+		for(WebService webService : changedMap.get("new")){
+			//默认是实际的
+			boolean flag = true;
+			
+			for(String input : (List<String>)webService.getInputs()){
+				if(!RPT1OfCopy.containsKey(input)){
+					flag = false;
+					break;
+				}
+			}
+			
+			if(flag){
+				this.realSum++;
+			}
+			
+		}
 		
 		// ---------------------------------------------------------------
 
@@ -1289,8 +1470,13 @@ public class MyFrame {
 		double t2;// 重查的时间
 
 		// 下面将对变化后的服务列分别进行连续查询和重查,比较花费的时间
-
-		for (int i = 0; i < 10; i++) {// 测出10组			
+		
+		/*---------------------------------continuequery--------------------------------*/
+		
+		for (int i = 0; i < 10; i++) {// 测出10组
+			//统计PQ的长度
+			this.PQMaxSize=0;
+			
 			// 还RPT1和serviceMap1
 			recoveryForHJQ(RPT1OfCopy);//ServiceMap所有服务设为最初值,RPT1也是
 			recoveryWithNewQosForHJQ(copyChangedList);//改变预定服务的qos值,因为上一行代码置为最初值
@@ -1312,7 +1498,11 @@ public class MyFrame {
 			continuousQuery4(qosChangedList);
 			endMili = System.nanoTime();
 			timeList.add(new Double((endMili - startMili)/1E6));
-
+			
+			if(dead){
+				return ;
+			}
+			
 		}
 
 		sortDoubleList(timeList);
@@ -1330,12 +1520,18 @@ public class MyFrame {
 		// cjh add
 		continueTime += t1;
 		
+		/*---------------------------------requery--------------------------------*/
+		
 		totalTime = 0;
 		timeList.clear();
 		
 		for (int i = 0; i < 10; i++) {
 			recoveryReQueryForHJQ();
+			recoveryIITForCJH(IITOfCopy);
+			Map<String, List<WebService>> addAndDeleteMap = recoveryWithAddAndDeleteForHJQ(changedMapOfCopy);
+			
 			startMili = System.nanoTime();// 当前时间对应的毫秒数
+			adaptIIT(addAndDeleteMap);
 			reQuery();
 			endMili = System.nanoTime();
 			timeList.add(new Double((endMili - startMili)/1E6));
@@ -1371,8 +1567,28 @@ public class MyFrame {
 
 		// 记录实际需要更新的ws(count!=0):的个数
 		recordRealSum.append(realSum + System.getProperty("line.separator"));
-
 		//*System.out.println("实际需要更新的ws(count!=0):的个数：" + realSum);
+		
+		
+		//跑实验B同时统计实验C的连续查询时间
+		if(experimentCC.get(this.realSum) == null){
+			List<Double> results = new ArrayList<Double>();
+			results.add(t1);
+			experimentCC.put(this.realSum, results);
+		}
+		else{
+			experimentCC.get(this.realSum).add(t1);
+		}
+		
+		// 跑实验B同时统计实验C的重查时间
+		if (experimentCR.get(this.realSum) == null) {
+			List<Double> results = new ArrayList<Double>();
+			results.add(t2);
+			experimentCR.put(this.realSum, results);
+		} else {
+			experimentCR.get(this.realSum).add(t2);
+		}
+		
 	}
 	
 	private void recoveryReQueryForHJQ() {
@@ -1533,10 +1749,11 @@ public class MyFrame {
 	 * @param IITOfCopy
 	 * @param RPT1OfCopy
 	 * @param solveMapOfCopy 
+	 * @param allInsts 
 	 * @param sb 
 	 */
 	public void randomTest1ForHJQ(List<WebService> testServiceList, Map<String, List<WebService>> OTOfCopy, Map<String, List<WebService>> IITOfCopy,
-			Map<String, WebService> RPT1OfCopy, Map<String, List<String>> solveMapOfCopy, StringBuilder sb) {
+			Map<String, WebService> RPT1OfCopy, Map<String, List<String>> solveMapOfCopy, List<String> allInsts, StringBuilder sb) {
 		
 		this.realSum = 0;
 		
@@ -1545,22 +1762,23 @@ public class MyFrame {
 		// HJQ_qosChangedList的副本,即qos发生变化的服务
 		List<WebService> copyChangedList = new ArrayList<WebService>();
 		
-		List<String > allInsts = DataGetter.getServicesAllInst(testServiceList, "all");
-		
-		Change change = new Change(testServiceList, allInsts,
+		Change change = new Change(testServiceList, allInsts, allInsts, 
 				(int) StatInfo.instAverage(testServiceList, "input"),
 				(int) StatInfo.instAverage(testServiceList, "output"), 30);
 		
-		int typeNumber = 3;
+		// 比例
+		int typeNumber = 5;
 		//随机产生变化服务数,<1000
 		
 		Random random = new Random();
 		
 		int sum = random.nextInt(1000);
+
+		// 1:1:3
 		int deletedWSSum = sum / typeNumber;
 		int addWSSum = sum / typeNumber;
-		int changedWSSum = changedWSSum = (sum % typeNumber == 0) ? sum / typeNumber : sum / typeNumber + sum % typeNumber;
-		
+		int changedWSSum = changedWSSum = (sum % typeNumber == 0) ? (sum / typeNumber * 3) : (sum / typeNumber * 3) + sum % typeNumber;
+
 		Map<String, List<WebService>> changedMap = change.changeWebServices(sum, addWSSum, changedWSSum,
 				deletedWSSum);
 		
@@ -1584,19 +1802,56 @@ public class MyFrame {
 			
 			for(WebService webService: webServices){
 				if(key.equals("delete")){
-					if(webService.getCount() == 0){
+					//if(webService.getCount() == 0){
 						sb.append(key + "," + webService.getName() + System.lineSeparator());
-					}
+					//}
 				}
 				else if(key.equals("qosChange")){
-					if(webService.getCount() == 0){
+					//if(webService.getCount() == 0){
 						sb.append(key + "," + webService.getName() + "," + webService.getSelfResponseTime() + System.lineSeparator());
-					}
+					//}
 				}
 				else{
 					sb.append(key + "," + webService.getInfo() + System.lineSeparator());
 				}
 			}
+		}
+		
+		int deletedRealSum = 0;
+		int newRealSum = 0;
+		int qosRealSum = 0;
+		
+		//统计实际的数量
+		for(WebService webService : changedMap.get("qosChange")){
+			if(webService.getCount() == 0){
+				this.realSum ++;
+				qosRealSum++;
+			}
+		}
+		
+		for(WebService webService : changedMap.get("delete")){
+			if(webService.getCount() == 0){
+				this.realSum ++;
+				deletedRealSum++;
+			}
+		}
+		
+		for(WebService webService : changedMap.get("new")){
+			//默认是实际的
+			boolean flag = true;
+			
+			for(String input : (List<String>)webService.getInputs()){
+				if(!RPT1OfCopy.containsKey(input)){
+					flag = false;
+					break;
+				}
+			}
+			
+			if(flag){
+				this.realSum++;
+				newRealSum++;
+			}
+			
 		}
 		
 		// ---------------------------------------------------------------
@@ -1610,9 +1865,9 @@ public class MyFrame {
 		List<Double> timeList = new ArrayList<Double>();
 		double t1;// 连续查询的时间
 		double t2;// 重查的时间
-
-		// 下面将对变化后的服务列分别进行连续查询和重查,比较花费的时间
-
+		
+		/*------------连续查询--------------------------*/
+		
 		for (int i = 0; i < groupNum; i++) {// 测出10组
 			//初始化PQMaxSize
 			this.PQMaxSize = 0;
@@ -1622,12 +1877,12 @@ public class MyFrame {
 			recoveryWithNewQosForHJQ(copyChangedList);//改变预定服务的qos值,因为上一行代码置为最初值
 			Map<String, List<WebService>> addAndDeleteMap = recoveryWithAddAndDeleteForHJQ(changedMapOfCopy);
 			recoveryIITForCJH(IITOfCopy);
-			recoverysolveMap(solveMapOfCopy);
 			recoveryOTForHJQ(OTOfCopy);
+			
+			qosChangedList.clear();
 			
 			startMili = System.nanoTime();// 当前时间对应的毫秒数
 			
-			qosChangedList.clear();
 			//新增删除的预处理
 			// 添加删除
 			qosChangedList.addAll(adaptDeleteWS(addAndDeleteMap.get("delete")));
@@ -1641,7 +1896,11 @@ public class MyFrame {
 			continuousQuery4(qosChangedList);
 			endMili = System.nanoTime();
 			timeList.add(new Double((endMili - startMili)/1E6));
-
+			
+			if(this.dead){
+				return;
+			}
+			
 		}
 
 		sortDoubleList(timeList);
@@ -1651,15 +1910,18 @@ public class MyFrame {
 
 		t1 = totalTime / (groupNum - 2 * excludedNum);
 		
+		/*------------重查--------------------------*/
+		
 		totalTime = 0;
 		timeList.clear();
 		
 		for (int i = 0; i < groupNum; i++) {
-			recoverysolveMap(solveMapOfCopy);
 			recoveryReQueryForHJQ();
-			recoveryOTForHJQ(OTOfCopy);
+			recoveryIITForCJH(IITOfCopy);
+			Map<String, List<WebService>> addAndDeleteMap = recoveryWithAddAndDeleteForHJQ(changedMapOfCopy);
 			
 			startMili = System.nanoTime();// 当前时间对应的毫秒数
+			adaptIIT(addAndDeleteMap);
 			reQuery();
 			endMili = System.nanoTime();
 			timeList.add(new Double((endMili - startMili)/1E6));
@@ -1757,6 +2019,9 @@ public class MyFrame {
 		// 记录格式化后的实验D信息
 		recordTime5.append(sum + ",");
 		recordTime5.append(realSum + ",");
+		recordTime5.append(deletedRealSum + ",");
+		recordTime5.append(newRealSum + ",");
+		recordTime5.append(qosRealSum + ",");
 		recordTime5.append(PQMaxSize + ",");
 		recordTime5.append(strategy1Time + ",");
 		recordTime5.append(strategy2Time + ",");
@@ -1773,11 +2038,12 @@ public class MyFrame {
 	 * @param solveMapOfCopy
 	 * @param OTOfCopy
 	 * @param RPT1OfCopy
+	 * @param realInsts 
 	 * @param i
 	 * @throws IOException
 	 */
 	public void testManyTime1ForHJQ(Map<String, List<String>> solveMapOfCopy, Map<String, List<WebService>> OTOfCopy, Map<String, List<WebService>> IITOfCopy,
-			Map<String, WebService> RPT1OfCopy, int i) throws IOException{
+			Map<String, WebService> RPT1OfCopy, List<String> allInsts, int i) throws IOException{
 		//HJQ 统计胜率,平率
 		this.winCount = 0;
 		this.equalCount = 0;
@@ -1790,15 +2056,16 @@ public class MyFrame {
 		this.bestStrategyTime = 0;
 
 		int time = 0;
-
+		//记录每组实验信息
 		StringBuilder sb = new StringBuilder();
-
+		
 		// 根据实验内容来选择改变策略,即存放着全部服务还是仅仅是实际网络结构中的服务
 		List<WebService> testServiceList = new ArrayList<WebService>();
 
 		while (time < count) {
+			this.dead = false;
 			time++;
-			if (time % 1000 == 0) {
+			if (time % 5 == 0) {
 				System.out.println("第" + time + "组");
 			}
 			if (time == 1) {
@@ -1806,8 +2073,18 @@ public class MyFrame {
 				recordTime2.append("Stratege2" + System.getProperty("line.separator"));
 				recordTime3.append("requery" + System.getProperty("line.separator"));
 				recordTime4.append("continuousQuery" + System.getProperty("line.separator"));
-				recordTime5.append("变化服务个数," + "实际需要更新的ws的个数," + "PQ队列的最大长度," + "策略1(" + this.strategy1ValueWithAD
-						+ ")," + "策略2(" + this.strategy2ValueWithAD + ")," + "重查," + "连续查询," + "结果"
+				recordTime5.append("变化服务个数,"
+						+ "实际需要更新的ws的个数,"
+						+ "实际删除的个数,"
+						+ "实际新增的个数,"
+						+ "实际qos变化的个数,"
+						+ "PQ队列的最大长度,"
+						+ "策略1(" + this.strategy1ValueWithAD
+						+ "),"
+						+ "策略2(" + this.strategy2ValueWithAD + "),"
+						+ "重查,"
+						+ "连续查询,"
+						+ "结果"
 						+ System.getProperty("line.separator"));
 			}
 
@@ -1826,8 +2103,13 @@ public class MyFrame {
 
 			// System.out.println("第"+time+"组");
 			sb.append("第" + time + "组" + System.lineSeparator());
-			randomTest1ForHJQ(testServiceList, OTOfCopy, IITOfCopy, RPT1OfCopy, solveMapOfCopy, sb);
+			randomTest1ForHJQ(testServiceList, OTOfCopy, IITOfCopy, RPT1OfCopy, solveMapOfCopy, allInsts, sb);
 			sb.append(System.lineSeparator());
+			
+			if(this.dead){
+				time--;
+			}
+			
 		}
 
 		// 记录平均时间
@@ -1905,6 +2187,14 @@ public class MyFrame {
 		//copy RPT1->RPT2 serviceMap1->serviceMap2
 		copy();
 		
+		//所有inst
+		List<String > allInsts = new ArrayList<String>();
+		for(String instAndCon: map1.keySet()){
+			if(instAndCon.contains("inst")){
+				allInsts.add(instAndCon);
+			}
+		}
+		
 		//相当于启动100次程序
 		this.allCount = 100;
 		StringBuilder sb = new StringBuilder();
@@ -1915,20 +2205,20 @@ public class MyFrame {
 			recordTime5 = new StringBuilder();
 			System.out.println("第" + i + "次");
 
-			testManyTime1ForHJQ(solveMapOfCopy, OTOfCopy, IITOfCopy, RPT1OfCopy, i);
+			testManyTime1ForHJQ(solveMapOfCopy, OTOfCopy, IITOfCopy, RPT1OfCopy, allInsts, i);
 			
 			long failCount = this.count - this.winCount - this.equalCount;
 			
 			if(this.winCount > failCount){
 				this.allWinCount++;
-				sb.append(i + ",胜" + System.lineSeparator());
+				sb.append(i + ",胜,");
 			}
 			else if(this.winCount == failCount){
 				this.allEqualCount++;
-				sb.append(i + ",平" + System.lineSeparator());
+				sb.append(i + ",平,");
 			}
 			else{
-				sb.append(i + ",负" + System.lineSeparator());
+				sb.append(i + ",负,");
 			}
 			
 			sb.append(this.requeryTime / this.count + ",");
@@ -1977,8 +2267,11 @@ public class MyFrame {
 		recordTime5 = new StringBuilder();
 		StringBuilder sb = new StringBuilder();
 		
-		while(time<count){			
+		while(time<count){
 			time++;
+			if (time % 5 == 0) {
+				System.out.println("第" + time + "组");
+			}
 			if(time==1){
 				recordTime1.append("Stratege1"+System.getProperty("line.separator"));
 				recordTime2.append("Stratege2"+System.getProperty("line.separator"));
@@ -1998,6 +2291,7 @@ public class MyFrame {
 			sb.append("第"+time+"组" + System.lineSeparator());
 			randomTest1(solveMapOfCopy, OTOfCopy, RPT1OfCopy, sb);
 			sb.append(System.lineSeparator());
+			
 		}
 		
 		//记录平均时间
@@ -2823,19 +3117,22 @@ public class MyFrame {
 	public void continuousQuery4(List<WebService> qosChangedList){//这个方法不更新没人需要的inst的最优parent
 		
 		List<WebService> PQ = new ArrayList<WebService>();
-		
-		Set webserviceSet = new HashSet();
+		//用于画图
+		List<WebService> PQOfCopy = new ArrayList<WebService>();
 		
 		for(int i=0;i<qosChangedList.size();i++){
 			if(qosChangedList.get(i).getCount()!=0) continue;
 			PQ.add(qosChangedList.get(i));
-			
 		}
-		
 		WebService first;
 				
 		while(!PQ.isEmpty()){
 			PQMaxSize++;
+			if(PQMaxSize > 250){
+				this.dead = true;
+				return;
+			}
+			
 					//HJQ_根据MIN(allqos,newallqos)大小排序
 			sort(PQ);
 //			System.out.println("***PQ****");
@@ -2851,6 +3148,9 @@ public class MyFrame {
 //			System.out.println("*********");
 			
 		    first = PQ.get(0);
+		    
+			//用于画图
+		    PQOfCopy.add(first);
 		    
 			PQ.remove(0);
 						//HJQ_若最后仅仅剩下Request服务(我认为是Response),直接改变allqos,即完成连续查询						
@@ -2938,7 +3238,7 @@ public class MyFrame {
 						for(int u=0;u<successorList.size();u++){
 										//HJQ_处理可达点
 							if(successorList.get(u).getCount()==0){
-								WebService successor = successorList.get(u);
+								WebService successor = successorList.get(u);					
 								//if(successor==null) System.out.println("kong");
 												//HJQ_找出能够匹配successor的input的qos最好的服务
 								WebService criticalParent = getCriticalParent(successor);
@@ -2965,7 +3265,8 @@ public class MyFrame {
 										if(successor.getNewAllResponseTime()!=criticalParentQos+successor.getSelfResponseTime()){
 										//	recordSomething=recordSomething+successor.getName()+" "+criticalParent.getName()+"的allqos为"+criticalParentQos+" "+successor.getNewAllResponseTime()+"--->"+criticalParentQos+successor.getSelfResponseTime()+"\n";
 											successor.setNewAllResponseTime(criticalParentQos+successor.getSelfResponseTime());
-											PQ.add(successor);										
+											
+											PQ.add(successor);
 										}
 										continue;
 									}
@@ -2974,10 +3275,11 @@ public class MyFrame {
 									if(successor.getAllResponseTime()!=criticalParentQos+successor.getSelfResponseTime()){
 									//	recordSomething=recordSomething+successor.getName()+" "+criticalParent.getName()+"的allqos为"+criticalParentQos+" "+successor.getAllResponseTime()+"--->"+criticalParentQos+successor.getSelfResponseTime()+"\n";
 										successor.setNewAllResponseTime(criticalParentQos+successor.getSelfResponseTime());
+										
 										PQ.add(successor);
 //										if(successor.getName().equals("serv612685309") || successor.getName().equals("serv612685309")){
 //											System.out.println("oooooo "+successor.getName()+" "+successor.getCount());
-//										}
+//										}	
 									}
 								}
 							}
@@ -3056,13 +3358,15 @@ public class MyFrame {
 										if(successor.getNewAllResponseTime()!=criticalParentQos+successor.getSelfResponseTime()){//这里和上面加了这句
 									//		recordSomething=recordSomething+successor.getName()+" "+criticalParent.getName()+"的allqos为"+criticalParentQos+" "+successor.getNewAllResponseTime()+"--->"+criticalParentQos+successor.getSelfResponseTime()+"\n";
 											successor.setNewAllResponseTime(criticalParentQos+successor.getSelfResponseTime());
-											PQ.add(successor);										
+											
+											PQ.add(successor);									
 										}
 										continue;
 									}
 									if(successor.getAllResponseTime()!=criticalParentQos+successor.getSelfResponseTime()){
 									//	recordSomething=recordSomething+successor.getName()+" "+criticalParent.getName()+"的allqos为"+criticalParentQos+" "+successor.getAllResponseTime()+"--->"+criticalParentQos+successor.getSelfResponseTime()+"\n";
 										successor.setNewAllResponseTime(criticalParentQos+successor.getSelfResponseTime());
+										
 										PQ.add(successor);
 //										if(successor.getName().equals("serv612685309") || successor.getName().equals("serv612685309")){
 //											System.out.println("oooooo "+successor.getName()+" "+successor.getCount());
@@ -3077,10 +3381,18 @@ public class MyFrame {
 					
 				}
 				first.setAllResponseTime(first.getNewAllResponseTime());
-				//PQ.add(first);
+				
 			}
 			
 		}
+		
+		//用于画图
+		PrintNetwork.printPQ(PQOfCopy);
+		
+		PQOfCopy.removeAll(qosChangedList);
+		
+		PrintNetwork.printPQWithoutFirstChanged(PQOfCopy);
+		//*//
 		
 		//System.out.print("continuous最优解是：");
 		if(serviceMap.get("Request").getNewAllResponseTime()>0){
@@ -4081,9 +4393,9 @@ public class MyFrame {
 			//*System.out.println("reQueryTotal总耗时为:"+totalTime/8+"毫秒");
 			
 			if(requeryQos==continousQos){
-				//*System.out.println("前后正确");		
+				//System.out.println("前后正确");		
 			}else{
-				//*System.out.println("前后bubububububu正确");		
+				//System.out.println("前后bubububububu正确");		
 			}
 			
 			//记录实际需要更新的ws(count!=0):的个数
@@ -4204,9 +4516,10 @@ public class MyFrame {
 		List<WebService> parents2 = new ArrayList<WebService>();
 		Set<WebService> parentSet = new HashSet<WebService>();
 		Map<String,ArrayList<String>> childParents = new HashMap<String,ArrayList<String>>();
+
 		for(int i=0;i<outputsFromChallenge.size();i++){
-			if(RPT.get(outputsFromChallenge.get(i)).getName().equals("serv1859188453"))
-				System.out.println("存在2031");
+			if(RPT.get(outputsFromChallenge.get(i)).getName().equals("serv1859188453"));
+			//*System.out.println("存在2031");
 			if(parentSet.add(RPT.get(outputsFromChallenge.get(i)))){
 				parents.add(RPT.get(outputsFromChallenge.get(i)));
 				parents2.add(RPT.get(outputsFromChallenge.get(i)));
@@ -4214,7 +4527,6 @@ public class MyFrame {
 			//System.out.println(RPT.get(outputsFromChallenge.get(i)));
 		}
 		//System.out.println("layerList.size="+layerList.size());
-		
 		
 		while(!parents.isEmpty()){
 			//System.out.println("kkk");
@@ -4224,8 +4536,8 @@ public class MyFrame {
 			parents.remove(parents.size()-1);
 			//System.out.println(ws);
 			for(int i=0;i<ws.getInputs().size();i++){
-				if(RPT.get(ws.getInputs().get(i)).getName().equals("serv1723601037"))
-					System.out.println("存在201");
+				if(RPT.get(ws.getInputs().get(i)).getName().equals("serv1723601037"));
+					//*System.out.println("存在201");
 				if(parentSet.add(RPT.get(ws.getInputs().get(i)))){
 					parents.add(RPT.get(ws.getInputs().get(i)));
 					parents2.add(RPT.get(ws.getInputs().get(i)));		
@@ -4239,6 +4551,15 @@ public class MyFrame {
 		}
 		System.out.println("Request");
 		System.out.println("END-backward");
+							
+		//画图用
+		if(typePath.equals("before")){
+			PrintNetwork.printOptimalPathBefore(parents2, RPT1, IIT);
+		}
+		else if(typePath.equals("last")){
+			PrintNetwork.printOptimalPathLast(parents2, RPT1, IIT);
+		}
+
 		
 //		parents2.add(serviceMap.get("Request"));
 //		for(int i=parents2.size()-1;i>=0;i--){
@@ -4633,8 +4954,6 @@ public class MyFrame {
 			if(!find)
 				System.out.println("找不到");
 			System.out.println("RPT大小:"+RPT.size());
-			
-			//System.out.println(enabledServices.size());
 	}
 	
 	//HJQ_获取出webService的QOS
@@ -4856,8 +5175,8 @@ public class MyFrame {
 		    		                      }
 		    		                      sumofIns++;
 		    		                 }
-		    		                System.out.println(sumofCon);
-		    		                System.out.println(sumofIns);
+		    		                System.out.println("all con : " + sumofCon);
+		    		                System.out.println("all inst : " + sumofIns);
 		    		                System.out.println("end");    		             
 		    		                System.out.println("test:"+map1.get("inst1814744254").toString());
 		    		                System.out.println(map1.size());

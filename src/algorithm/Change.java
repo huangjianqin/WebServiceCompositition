@@ -19,11 +19,12 @@ public class Change {
 	 * @param testServiceList:需要改变的服务的列表
 	 * @param qosChangeBound:qos变化的区间:±qosChangeBound
 	 */
-	public Change(List<WebService> testServiceList, List<String> insts, int inputMean, int outputMean,
+	public Change(List<WebService> testServiceList, List<String> inInsts, List<String> outInsts,int inputMean, int outputMean,
 			int qosChangeBound) {
 		super();
 		this.testServiceList = testServiceList;
-		this.insts = insts;
+		this.inInsts = inInsts;
+		this.outInsts = outInsts;
 		this.inputMean = inputMean;
 		this.outputMean = outputMean;
 		this.qosChangeBound = qosChangeBound;
@@ -77,7 +78,7 @@ public class Change {
 				int inputNum = random.nextInt(this.inputMean) + 1;
 				int outputNum = random.nextInt(this.outputMean) + 1;
 
-				WebService newWs = genNewWebService(this.insts, inputNum, outputNum);
+				WebService newWs = genNewWebService(inInsts, outInsts, inputNum, outputNum);
 				changedServices.get("new").add(newWs);
 				hasNew += 1;
 			} else if (hasDelete < deleteLimit) {
@@ -134,12 +135,12 @@ public class Change {
 	/**
 	 * 功能:生成一个新的服务
 	 * 
-	 * @param insts:用于随机生成服务的inst列表
+	 * @param inInsts:用于随机生成服务的inst列表
 	 * @param inputNum:输入端参数的数量
 	 * @param outputNum:输出端参数的数量
 	 * @return WebService:新生成的服务
 	 */
-	private WebService genNewWebService(List<String> insts, int inputNum, int outputNum) {
+	private WebService genNewWebService(List<String> inInsts, int inputNum, int outputNum) {
 
 		Set<String> filterSet = new HashSet<String>();
 
@@ -153,7 +154,7 @@ public class Change {
 		List<String> inputs = new ArrayList<String>();
 		while (hasInput < inputNum) {
 			Random inputRandom = new Random();
-			String input = insts.get(inputRandom.nextInt(insts.size()));
+			String input = inInsts.get(inputRandom.nextInt(inInsts.size()));
 			if (filterSet.add(input)) {
 				inputs.add(input);
 				hasInput += 1;
@@ -165,7 +166,49 @@ public class Change {
 		List<String> outputs = new ArrayList<String>();
 		while (hasOutput < outputNum) {
 			Random outputRandom = new Random();
-			String output = insts.get(outputRandom.nextInt(insts.size()));
+			String output = inInsts.get(outputRandom.nextInt(inInsts.size()));
+			if (filterSet.add(output)) {
+				outputs.add(output);
+				hasOutput += 1;
+			}
+		}
+		newWs.setOutputs(outputs); // 将随机生成的输出列表赋给newWs
+
+		Random qosRandom = new Random();
+		double newQos = qosRandom.nextDouble() * this.maxQos;
+		newWs.setSelfResponseTime(newQos); // 设置新的Qos
+		newWs.setCount(inputNum);
+
+		return newWs;
+	}
+	
+	private WebService genNewWebService(List<String> ininInsts, List<String> outinInsts,int inputNum, int outputNum) {
+
+		Set<String> filterSet = new HashSet<String>();
+
+		WebService newWs = new WebService();
+		newWs.setAllResponseTime(Double.MAX_VALUE);
+		newWs.setNewAllResponseTime(Double.MAX_VALUE);
+		newWs.setName("newWebService " + this.newWsId);
+		this.newWsId += 1;
+
+		int hasInput = 0;
+		List<String> inputs = new ArrayList<String>();
+		while (hasInput < inputNum) {
+			Random inputRandom = new Random();
+			String input = inInsts.get(inputRandom.nextInt(inInsts.size()));
+			if (filterSet.add(input)) {
+				inputs.add(input);
+				hasInput += 1;
+			}
+		}
+		newWs.setInputs(inputs); // 将随机生成的输入列表赋给newWs
+
+		int hasOutput = 0;
+		List<String> outputs = new ArrayList<String>();
+		while (hasOutput < outputNum) {
+			Random outputRandom = new Random();
+			String output = outInsts.get(outputRandom.nextInt(outInsts.size()));
 			if (filterSet.add(output)) {
 				outputs.add(output);
 				hasOutput += 1;
@@ -181,13 +224,16 @@ public class Change {
 		return newWs;
 	}
 
+	
+	
 	// 主函数
 	public static void main(String[] args) {
 
 	}
 
 	private List<WebService> testServiceList;
-	private List<String> insts; // 所有insts的列表
+	private List<String> inInsts; // 所有inInsts的列表
+	private List<String> outInsts;
 	private int inputMean; // 服务节点input的平均数
 	private int outputMean; // 服务节点输出inst的平均数
 	private int qosChangeBound; // Qos改变（增加或减少）的上限

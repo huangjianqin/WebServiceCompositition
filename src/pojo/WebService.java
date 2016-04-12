@@ -129,7 +129,6 @@ public class WebService implements Comparable<Object>,Cloneable{
 		
 		if(outputs != null){
 			sb.append(",");
-			
 			for(int i = 0; i < outputs.size(); i++){
 				if(i != (outputs.size() - 1)){
 					sb.append(outputs.get(i) + ":");
