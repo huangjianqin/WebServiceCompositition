@@ -23,7 +23,12 @@ import algorithm.DataGetter;
 import algorithm.PrintNetwork;
 import algorithm.StatInfo;
 import javafx.scene.chart.PieChart.Data;
+import pojo.ExperimentRankBean;
+import pojo.WS2NextWSNumBean;
 import pojo.WebService;
+import statistic.PrintPQBCDiagram;
+import statistic.PrintRankResult;
+import statistic.PrintStatisticResult;
 
 import java.awt.event.ActionListener;
 import java.awt.event.ActionEvent;
@@ -33,6 +38,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.math.BigDecimal;
+import java.sql.Time;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -43,6 +50,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Random;
 import java.util.Scanner;
 import java.util.Set;
@@ -57,12 +65,13 @@ public class MyFrame {
 				//HJQ_  服务name->服务
 	private Map<String,WebService> serviceMap;
 	private Map<String,WebService> RPT;
+				//可以输入有某个inst作为input的webservice列表
 	private Map<String,List<WebService>> IIT;
 	private List<String> inputsFromChallenge;
 	private List<String> outputsFromChallenge;
 	
 	private Map<String,WebService> enabledServices;
-				//HJQ_inst --> list<WebSerivce> webService可输出inst的list
+				//HJQ_inst --> list<WebSerivce>  可输出inst的list<webService>
 	private Map<String,List<WebService>> OT;
 				//HJQ_inst --> list<inst> inst可以匹配的inst列表
 	private Map<String,List<String>> solveMap;
@@ -142,6 +151,18 @@ public class MyFrame {
 	//画图用
 	private String typePath = "before";
 	
+	//统计某个服务到终点服务的距离数
+	private Map<String, Integer> wsToEndWSLengthMap = new HashMap<String, Integer>();
+	
+	//统计服务下一层会波及的服务数
+	private Map<String, Integer> rankMap = new HashMap<String, Integer>();
+	private List<WS2NextWSNumBean> ws2NextWSNumBeans = new ArrayList<WS2NextWSNumBean>();
+	private List<ExperimentRankBean> tempExperimentRank = new ArrayList<ExperimentRankBean>();
+	private List<Map<String, List<WebService>>> tempChanged;
+	private int fileNum = 1;
+	private int runTimes = 0;
+	
+	
 	public MyFrame() throws FileNotFoundException {
 		initialize();
 		 map1 = new HashMap();//map1:类-父类，实例-类
@@ -211,8 +232,8 @@ public class MyFrame {
 						
 						//sumOfChangedService=Integer.parseInt(str2);
 						try {
-							//testManyTimeForHJQAuto("B");
-							testManyTimeAuto();
+							testManyTimeForHJQAuto("B");
+							//testManyTimeAuto();
 						} catch (IOException e) {
 							// TODO Auto-generated catch block
 							e.printStackTrace();
@@ -252,10 +273,34 @@ public class MyFrame {
 				if(str1!=null){					
 						count=Integer.parseInt(str1);						
 						try {
-							//testManyTime1ForWin();
+//							testManyTime1ForWin();
 							testManyTime1ForWinHJQ();
+							
+							
+//							//记录10组实验的排名结果
+//							PrintRankResult.getInstance().print("前面六个代表某次实验的前3的服务及波及点数,此次变化中排名在前20的数目,PQ长度");
+//							Collections.sort(tempExperimentRank);
+//							Collections.reverse(tempExperimentRank);
+//							
+//							for(int j = 0; j < tempExperimentRank.size(); j++){
+//								ExperimentRankBean bean = tempExperimentRank.get(j);
+//								
+//								String content = "";
+//								
+//								for(WS2NextWSNumBean temp : bean.getWs2NextWSNumBeans()){
+//									int index = ws2NextWSNumBeans.indexOf(temp);
+//									
+//									content += temp.getWsName() + "(" + (index + 1) + "), " +
+//												temp.getNextWSNum() + ",";
+//								}
+//								
+//								content += bean.getRank20Num() + ",";
+//								content += bean.getPQ() + System.lineSeparator();
+//								PrintRankResult.getInstance().print(content);
+//							}
+							
+							
 						} catch (IOException e) {
-							// TODO Auto-generated catch block
 							System.out.println("186");
 							e.printStackTrace();
 						}
@@ -294,33 +339,44 @@ public class MyFrame {
 			    System.out.println("可达的服务数:"+sumOfCanUseWS);
 			    backward(outputsFromChallenge,RPT,serviceMap);
 			    
-			    //画图用
-			    PrintNetwork.printNetwork(RPT1, IIT);
-			    PrintNetwork.printOutputsNum(RPT1, IIT);
+			    //统计每个服务科波及服务数并排序
+			    //statisticOneLevel(false);
+			    statisticOneLevel(true);
 			    
-			    Map<String , Double> qosChanged = DataGetter.readQOSChanged();
-			    ArrayList<WebService> qosChangedList = new ArrayList<WebService>();
-			    
-			    for(String WSName: qosChanged.keySet()){
-			    	if(serviceMap.get(WSName) != null){
-			    		double all = serviceMap.get(WSName).getAllResponseTime();
-			    		double oldQOS = serviceMap.get(WSName).getSelfResponseTime();
-			    		serviceMap.get(WSName).setSelfResponseTime(qosChanged.get(WSName));
-			    		serviceMap.get(WSName).setNewAllResponseTime(all - oldQOS + qosChanged.get(WSName));
-			    		
-			    		//serv947554374			    		
-			    		qosChangedList.add(serviceMap.get(WSName));
-			    	}
-			    }
-			    
-			    //画图用,输出qos变化服务
-			    PrintNetwork.printFirstChanged(qosChangedList);
-			    
-			    continuousQuery4(qosChangedList);
-			    
-			    typePath="last";
-			    backward(outputsFromChallenge,RPT,serviceMap);
-			    
+//			    //统计某个服务到终点的距离数
+//			    statisticWSToEndWSLengthMap();
+//			    statisticOutputs(null);
+//			    PrintStatisticResult.getInstance().print(0 + ",");
+//				PrintStatisticResult.getInstance().print(0 + ",");
+//				PrintStatisticResult.getInstance().print(0 + System.lineSeparator());
+//			    
+//			    //画图用
+//			    PrintNetwork.printNetwork(RPT1, IIT);
+//			    PrintNetwork.printOutputsNum(RPT1, IIT);
+//			    
+//			    Map<String , Double> qosChanged = DataGetter.readQOSChanged();
+//			    ArrayList<WebService> qosChangedList = new ArrayList<WebService>();
+//			    
+//			    for(String WSName: qosChanged.keySet()){
+//			    	if(serviceMap.get(WSName) != null){
+//			    		double all = serviceMap.get(WSName).getAllResponseTime();
+//			    		double oldQOS = serviceMap.get(WSName).getSelfResponseTime();
+//			    		serviceMap.get(WSName).setSelfResponseTime(qosChanged.get(WSName));
+//			    		serviceMap.get(WSName).setNewAllResponseTime(all - oldQOS + qosChanged.get(WSName));
+//			    		
+//			    		//serv947554374			    		
+//			    		qosChangedList.add(serviceMap.get(WSName));
+//			    	}
+//			    }
+//			    
+//			    //画图用,输出qos变化服务
+//			    PrintNetwork.printFirstChanged(qosChangedList);
+//			    
+//			    continuousQuery4(qosChangedList);
+//			    
+//			    typePath="last";
+//			    backward(outputsFromChallenge,RPT,serviceMap);
+//			    
 //			    System.out.println(serviceMap.get("serv612685309").getCount()+"ppppp");
 //			    System.out.println(serviceMap.get("serv1928620686").getCount()+"ppppp");
 			   //
@@ -1188,10 +1244,11 @@ public class MyFrame {
 	 * @param allInsts 
 	 * @param experimentC 
 	 * @param experimentCC 
+	 * @param experimentPQ 
 	 * @throws IOException
 	 */
 	public void testManyTimeForHJQ(String type, StringBuilder sb, Map<String, List<WebService>> OTOfCopy, Map<String, List<WebService>> IITOfCopy,
-			Map<String, WebService> RPT1OfCopy, List<String> allInsts, List<String> realInsts, Map<Integer, List<Double>> experimentCC, Map<Integer, List<Double>> experimentCR) throws IOException {
+			Map<String, WebService> RPT1OfCopy, List<String> allInsts, List<String> realInsts, Map<Integer, List<Double>> experimentCC, Map<Integer, List<Double>> experimentCR, Map<Integer, List<Double[]>> experimentPQ) throws IOException {
 		requeryTime = 0;
 		continueTime = 0;
 		
@@ -1238,7 +1295,7 @@ public class MyFrame {
 			}
 			
 			// HJQ randomTest();
-			randomTestForHJQ(type, testServiceList, OTOfCopy, IITOfCopy, RPT1OfCopy, allInsts, realInsts, experimentCC, experimentCR);
+			randomTestForHJQ(type, testServiceList, OTOfCopy, IITOfCopy, RPT1OfCopy, allInsts, realInsts, experimentCC, experimentCR, experimentPQ);
 			if(dead){
 				time--;
 			}
@@ -1298,7 +1355,7 @@ public class MyFrame {
 		int[] testGroup = null;
 		
 		if(type.equals("B")){
-			//50,100,150
+			//50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000
 			testGroup = new int[]{50,100,150,200,250,300,350,400,450,500,550,600,650,700,750,800,850,900,950,1000};
 		}
 		else if(type.equals("C")){
@@ -1312,12 +1369,15 @@ public class MyFrame {
 		Map<Integer, List<Double>> experimentCC = new HashMap<Integer, List<Double>>();
 		Map<Integer, List<Double>> experimentCR = new HashMap<Integer, List<Double>>();
 		
+		//统计基于PQ的两个算法对比得出PQ相关的阈值
+		Map<Integer, List<Double[]>> experimentPQ = new HashMap<Integer, List<Double[]>>();
+		
 		for(int i = 0; i < testGroup.length; i++){
 			System.out.print("实验" + type + ":");
 			System.out.println(testGroup[i]);
 			
 			this.sumOfChangedService = testGroup[i];
-			testManyTimeForHJQ(type, sb, OTOfCopy, IITOfCopy, RPT1OfCopy, allInsts, realInsts, experimentCC, experimentCR);
+			testManyTimeForHJQ(type, sb, OTOfCopy, IITOfCopy, RPT1OfCopy, allInsts, realInsts, experimentCC, experimentCR,experimentPQ);
 		}
 		
 		out1 = new FileOutputStream("result" + type + ".csv");
@@ -1364,6 +1424,23 @@ public class MyFrame {
 		out1.write(sc.toString().getBytes());
 		out1.close();
 
+		// 处理实验C的连续查询实验结果-----------------------------------------------------------------
+		for (Integer key : experimentPQ.keySet()) {
+			double requerySum = 0;
+			double continuequerySum = 0;
+			int num = experimentPQ.get(key).size();
+
+			for (Double[] result : experimentPQ.get(key)) {
+				requerySum += result[0];
+				continuequerySum += result[1];
+			}
+
+			PrintPQBCDiagram.getInstance().print(key + "," + requerySum / num + "," + 
+												continuequerySum / num + "," + 
+												num + System.lineSeparator());
+
+		}
+
 	}
 	
 	/**
@@ -1377,11 +1454,12 @@ public class MyFrame {
 	 * @param realInsts 
 	 * @param experimentC 
 	 * @param experimentCC 
+	 * @param experimentPQ 
 	 * @param iITOfCopy 
 	 * @param oTOfCopy 
 	 */
 	public void randomTestForHJQ(String type, List<WebService> testServiceList, Map<String, List<WebService>> OTOfCopy, Map<String, List<WebService>> IITOfCopy,
-			Map<String, WebService> RPT1OfCopy, List<String> allInsts, List<String> realInsts, Map<Integer, List<Double>> experimentCC, Map<Integer, List<Double>> experimentCR) {
+			Map<String, WebService> RPT1OfCopy, List<String> allInsts, List<String> realInsts, Map<Integer, List<Double>> experimentCC, Map<Integer, List<Double>> experimentCR, Map<Integer, List<Double[]>> experimentPQ) {
 		// HJQ_所有变化的服务
 		List<WebService> qosChangedList = new ArrayList<WebService>();
 		// HJQ_qosChangedList的副本,即qos发生变化的服务
@@ -1589,6 +1667,25 @@ public class MyFrame {
 			experimentCR.get(this.realSum).add(t2);
 		}
 		
+		//统计基于PQ的两个算法对比得出PQ相关的阈值
+		if (experimentPQ.get(this.PQMaxSize) == null) {
+			List<Double[]> results = new ArrayList<Double[]>();
+			
+			Double[] times = new Double[2];
+			
+			times[0] = t2;
+			times[1] = t1;
+			
+			results.add(times);
+			experimentPQ.put(this.PQMaxSize, results);
+		} else {
+			Double[] times = new Double[2];
+			
+			times[0] = t2;
+			times[1] = t1;
+			
+			experimentPQ.get(this.PQMaxSize).add(times);
+		}
 	}
 	
 	private void recoveryReQueryForHJQ() {
@@ -1779,9 +1876,24 @@ public class MyFrame {
 		int addWSSum = sum / typeNumber;
 		int changedWSSum = changedWSSum = (sum % typeNumber == 0) ? (sum / typeNumber * 3) : (sum / typeNumber * 3) + sum % typeNumber;
 
-		Map<String, List<WebService>> changedMap = change.changeWebServices(sum, addWSSum, changedWSSum,
+		Map<String, List<WebService>> changedMap
+		= change.changeWebServices(sum, addWSSum, changedWSSum,
 				deletedWSSum);
 		
+//		//用于重新读取以前的变化情况
+//		if(this.runTimes >= this.count){
+//			this.fileNum ++;
+//			this.runTimes = 0;
+//		}
+//		
+//		try {
+//			changedMap = DataGetter.readChanged(serviceMap, this.fileNum, this.runTimes);
+//		} catch (Exception e) {
+//			e.printStackTrace();
+//		}
+//		runTimes ++;
+//		List<WS2NextWSNumBean> tempRanks = new ArrayList<WS2NextWSNumBean>();;
+//		
 		// 处理copyChangedList
 		for (WebService webService : changedMap.get("qosChange")) {
 			WebService newWS = null;
@@ -1802,14 +1914,22 @@ public class MyFrame {
 			
 			for(WebService webService: webServices){
 				if(key.equals("delete")){
-					//if(webService.getCount() == 0){
-						sb.append(key + "," + webService.getName() + System.lineSeparator());
-					//}
+					sb.append(key + "," + webService.getName() + System.lineSeparator());
+					
+					//统计变化服务的博几点排名
+//					WS2NextWSNumBean ws2NextWSNumBean = new WS2NextWSNumBean();
+//					ws2NextWSNumBean.setWsName(webService.getName());
+//					ws2NextWSNumBean.setNextWSNum(rankMap.get(webService.getName()));
+//					tempRanks.add(ws2NextWSNumBean);
 				}
 				else if(key.equals("qosChange")){
-					//if(webService.getCount() == 0){
-						sb.append(key + "," + webService.getName() + "," + webService.getSelfResponseTime() + System.lineSeparator());
-					//}
+					sb.append(key + "," + webService.getName() + "," + webService.getSelfResponseTime() + System.lineSeparator());
+				
+//					//统计变化服务的博几点排名
+//					WS2NextWSNumBean ws2NextWSNumBean = new WS2NextWSNumBean();
+//					ws2NextWSNumBean.setWsName(webService.getName());
+//					ws2NextWSNumBean.setNextWSNum(rankMap.get(webService.getName()));
+//					tempRanks.add(ws2NextWSNumBean);
 				}
 				else{
 					sb.append(key + "," + webService.getInfo() + System.lineSeparator());
@@ -1855,7 +1975,6 @@ public class MyFrame {
 		}
 		
 		// ---------------------------------------------------------------
-		
 		int groupNum = 100;
 		int excludedNum = 10;
 		
@@ -1865,6 +1984,9 @@ public class MyFrame {
 		List<Double> timeList = new ArrayList<Double>();
 		double t1;// 连续查询的时间
 		double t2;// 重查的时间
+		
+//		//统计长度
+//		statisticWSToEndWSLengthMap();
 		
 		/*------------连续查询--------------------------*/
 		
@@ -1909,7 +2031,7 @@ public class MyFrame {
 		}
 
 		t1 = totalTime / (groupNum - 2 * excludedNum);
-		
+				
 		/*------------重查--------------------------*/
 		
 		totalTime = 0;
@@ -1926,7 +2048,44 @@ public class MyFrame {
 			endMili = System.nanoTime();
 			timeList.add(new Double((endMili - startMili)/1E6));
 		}
-
+		
+//		//得出前三排名
+//		Collections.sort(tempRanks);
+//		int size = tempRanks.size();
+//		int end = size - 1;
+//		int start = (size - 3) >= 0? size - 3: 0;
+//		
+//		ExperimentRankBean experimentRankBean = new ExperimentRankBean();
+//		for(int i = end; i >= start; i--){
+//			experimentRankBean.getWs2NextWSNumBeans().add(tempRanks.get(i));
+//		}
+//		experimentRankBean.setPQ(PQMaxSize);
+//		
+//		//统计变化服务出现在前20的位置
+//		int count = 0;
+//		
+//		for(WS2NextWSNumBean bean : tempRanks){
+//			if(bean.getNextWSNum() != null 
+//					&& bean.getNextWSNum() >= 
+//					ws2NextWSNumBeans.get(20).getNextWSNum()){
+//				count++;
+//			}
+//		}
+//		experimentRankBean.setRank20Num(count);
+//		System.out.println(experimentRankBean);
+//		this.tempExperimentRank.add(experimentRankBean);
+//		
+//		//统计宽度
+//		statisticOutputs(changedMap);
+//		System.out.println("global dynamic ws num:" + sum);
+//		System.out.println("actual dynamic ws num:" + realSum);
+//		System.out.println(PQMaxSize);
+//		
+//		PrintStatisticResult.getInstance().print(sum + ",");
+//		PrintStatisticResult.getInstance().print(realSum + ",");
+//		PrintStatisticResult.getInstance().print(PQMaxSize + System.lineSeparator());
+		
+		
 		sortDoubleList(timeList);
 		for (int i=(excludedNum != 1 ?(excludedNum - 1) : 1);i<groupNum-excludedNum;i++) {
 			totalTime = totalTime + timeList.get(i);
@@ -3386,13 +3545,13 @@ public class MyFrame {
 			
 		}
 		
-		//用于画图
-		PrintNetwork.printPQ(PQOfCopy);
-		
-		PQOfCopy.removeAll(qosChangedList);
-		
-		PrintNetwork.printPQWithoutFirstChanged(PQOfCopy);
-		//*//
+//		//用于画图
+//		PrintNetwork.printPQ(PQOfCopy);
+//		
+//		PQOfCopy.removeAll(qosChangedList);
+//		
+//		PrintNetwork.printPQWithoutFirstChanged(PQOfCopy);
+//		//*//
 		
 		//System.out.print("continuous最优解是：");
 		if(serviceMap.get("Request").getNewAllResponseTime()>0){
@@ -4004,7 +4163,7 @@ public class MyFrame {
 					sb.append(temp.getName() + "," + temp.getSelfResponseTime() + System.getProperty("line.separator"));
 				}
 			}
-			 
+			
 			int groupNum = 100;
 			int excludedNum = 10;
 			
@@ -4055,7 +4214,8 @@ public class MyFrame {
 			
 			totalTime=0;
 			timeList.clear();
-			
+			//统计某服务到终点服务的距离数
+//			System.out.println("PQ max num:" + PQMaxSize);
 			for(int i=0;i<groupNum;i++){//测出groupNum组
 				//恢复count
 				recoveryReQueryForHJQ();
@@ -4068,6 +4228,7 @@ public class MyFrame {
 				timeList.add(new Double((endMili-startMili)/1E6));
 				//System.out.println("reQuery总耗时为:"+(endMili-startMili)+"毫秒");											
 			}
+
 			
 			sortDoubleList(timeList);
 			//System.out.println("重查:" + timeList);
@@ -4551,14 +4712,15 @@ public class MyFrame {
 		}
 		System.out.println("Request");
 		System.out.println("END-backward");
-							
-		//画图用
-		if(typePath.equals("before")){
-			PrintNetwork.printOptimalPathBefore(parents2, RPT1, IIT);
-		}
-		else if(typePath.equals("last")){
-			PrintNetwork.printOptimalPathLast(parents2, RPT1, IIT);
-		}
+		
+//		
+//		//画图用
+//		if(typePath.equals("before")){
+//			PrintNetwork.printOptimalPathBefore(parents2, RPT1, IIT);
+//		}
+//		else if(typePath.equals("last")){
+//			PrintNetwork.printOptimalPathLast(parents2, RPT1, IIT);
+//		}
 
 		
 //		parents2.add(serviceMap.get("Request"));
@@ -5192,5 +5354,457 @@ public class MyFrame {
 				 
 		}
 
+	/**
+	 * 统计宽度--4种情况
+	 * @param changedMap 
+	 * @param changedMap 
+	 */
+	public void statisticOutputs(Map<String, List<WebService>> changedMap){
+		statisticAvgGlobalOutputs(changedMap);
+	    statisticAvgGlobalOutputsNoMatch(changedMap);
+	    statisticAvgActualOutputs(changedMap);
+	    statisticAvgActualOutputsNoMatch(changedMap);
+	} 
 	
+	/**
+	 * 统计某服务到终点服务的距离
+	 */
+	public void statisticWSToEndWSLengthMap(){
+		wsToEndWSLengthMap.clear();
+		
+		//System.out.println("statisticWSToEndWSLengthMap() start.........");
+		WebService now = null;
+		wsToEndWSLengthMap.put(serviceMap.get("Request").getName(), 1);
+		
+		Queue<WebService> queue = new ArrayDeque<WebService>();
+		queue.add(serviceMap.get("Request"));
+		
+		while(!queue.isEmpty()){
+//			Object[] obs = queue.toArray();
+//			for(int i = 0; i < obs.length; i++){
+//				System.out.print( ((WebService)obs[i]).getName() + ",");
+//			}
+//			System.out.println();
+			now = queue.poll();
+			
+			int childLength = (wsToEndWSLengthMap.get(now.getName()) == null)? 0:wsToEndWSLengthMap.get(now.getName());
+			
+			for(String input: (List<String>)now.getInputs()){
+				WebService parent = RPT1.get(input);
+				
+				int parentLength = (wsToEndWSLengthMap.get(parent.getName()) == null)? 0:wsToEndWSLengthMap.get(parent.getName());
+				
+				wsToEndWSLengthMap.put(parent.getName(), parentLength + childLength);
+				
+				if(!parent.getName().equals("Provide") && !queue.contains(parent)){
+					queue.add(parent);
+				}
+			}
+			
+		}
+		
+		double size = wsToEndWSLengthMap.size();
+		double sum = 0;
+		
+		for(String name: wsToEndWSLengthMap.keySet()){
+//			System.out.println(name + "<" + wsToEndWSLengthMap.get(name) + ">");
+			sum += wsToEndWSLengthMap.get(name);
+		}
+		
+		System.out.println("average distance to endWS: " + (sum/size));
+		PrintStatisticResult.getInstance().print(sum/size + ",");
+		//System.out.println("statisticWSToEndWSLengthMap() end!!!!!");
+	}
+	
+	
+	public boolean judgeNewOrDelete(Map<String, List<WebService>> changedMap, String wsName, String type){
+		for (WebService ws : changedMap.get(type)) {
+			if (ws.getName().equals(wsName)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	
+	/**
+	 * 统计实际拓扑中的平均宽度(算上可匹配)
+	 * @param changedMap 
+	 */
+
+	public void statisticAvgActualOutputs(Map<String, List<WebService>> changedMap){
+		Set<WebService> hasHandledWS = new HashSet<WebService>();
+		
+		double sum = 0;
+		
+		for(WebService ws : serviceMap.values()){
+			
+			if(ws.getCount() == 0){
+				if(!hasHandledWS.add(ws)){
+					continue;
+				}
+				
+				Set<String> insts = new HashSet<String>();
+				
+				if(ws.getOutputs() != null){
+					for(String inst : (List<String>)ws.getOutputs()){
+						insts.add(inst);
+						if(solveMap.get(inst) != null){
+							insts.addAll(solveMap.get(inst));
+						}
+					}
+				}
+				
+				sum += insts.size();
+			}
+		}
+		
+		if(changedMap != null){
+			for(List<WebService> list : IIT.values()){
+				for(WebService ws : list){
+					
+					if(ws.getCount() == 0){
+						if(judgeNewOrDelete(changedMap, ws.getName(), "delete")){
+							Iterator<WebService> iterator = hasHandledWS.iterator();
+							
+							while(iterator.hasNext()){
+								WebService temp = iterator.next();
+								if(temp.getName().equals(ws.getName())){
+									iterator.remove();
+									break;
+								}
+							}
+							
+							Set<String> insts = new HashSet<String>();
+							
+							if(ws.getOutputs() != null){
+								for(String inst : (List<String>)ws.getOutputs()){
+									insts.add(inst);
+									if(solveMap.get(inst) != null){
+										insts.addAll(solveMap.get(inst));
+									}
+								}
+							}
+							
+							sum -= insts.size();
+						}else{
+							if(!hasHandledWS.add(ws)){
+								continue;
+							}
+							
+							Set<String> insts = new HashSet<String>();
+							
+							if(ws.getOutputs() != null){
+								for(String inst : (List<String>)ws.getOutputs()){
+									insts.add(inst);
+									if(solveMap.get(inst) != null){
+										insts.addAll(solveMap.get(inst));
+									}
+								}
+							}
+							
+							sum += insts.size();
+						}
+					}
+				}
+			}
+		}
+		
+		int size = hasHandledWS.size();
+		
+		System.out.println("average actual outputs:" + sum/size);
+		PrintStatisticResult.getInstance().print(sum/size + ",");
+	}
+	/**
+	 * 统计实际拓扑中的平均宽度(不算上可匹配)
+	 * @param changedMap 
+	 */
+	public void statisticAvgActualOutputsNoMatch(Map<String, List<WebService>> changedMap){
+		Set<WebService> hasHandledWS = new HashSet<WebService>();
+		
+		double sum = 0;
+		
+		for(WebService ws : serviceMap.values()){
+			
+			if(ws.getCount() == 0){
+				if(!hasHandledWS.add(ws)){
+					continue;
+				}
+				
+				Set<String> insts = new HashSet<String>();
+				
+				if(ws.getOutputs() != null){
+					insts.addAll(ws.getOutputs());
+				}
+				
+				sum += insts.size();
+			}
+		}
+		
+		if(changedMap != null){
+			for(List<WebService> list : IIT.values()){
+				for(WebService ws : list){
+					
+					if(ws.getCount() == 0){
+						if(judgeNewOrDelete(changedMap, ws.getName(), "delete")){
+							Iterator<WebService> iterator = hasHandledWS.iterator();
+							
+							while(iterator.hasNext()){
+								WebService temp = iterator.next();
+								if(temp.getName().equals(ws.getName())){
+									iterator.remove();
+									break;
+								}
+							}
+							
+							Set<String> insts = new HashSet<String>();
+							
+							if(ws.getOutputs() != null){
+								insts.addAll(ws.getOutputs());
+							}
+							
+							sum -= insts.size();
+						}else{
+							if(!hasHandledWS.add(ws)){
+								continue;
+							}
+							
+							Set<String> insts = new HashSet<String>();
+							
+							if(ws.getOutputs() != null){
+								insts.addAll(ws.getOutputs());
+							}
+							
+							sum += insts.size();
+						}
+					}
+				}
+			}
+		}
+		
+		int size = hasHandledWS.size();
+		
+		System.out.println("average actual outputs(no match):" + sum/size);
+		PrintStatisticResult.getInstance().print(sum/size + ",");
+	}
+	/**
+	 * 统计全局拓扑中的平均宽度(算上可匹配)
+	 * @param changedMap 
+	 */
+	public void statisticAvgGlobalOutputs(Map<String, List<WebService>> changedMap){
+		Set<WebService> hasHandledWS = new HashSet<WebService>();
+		
+		double sum = 0;
+		
+		for(WebService ws : serviceMap.values()){
+			if(!hasHandledWS.add(ws)){
+				continue;
+			}
+			
+			Set<String> insts = new HashSet<String>();
+			
+			if(ws.getOutputs() != null){
+				for(String inst : (List<String>)ws.getOutputs()){
+					insts.add(inst);
+					if(solveMap.get(inst) != null){
+						insts.addAll(solveMap.get(inst));
+					}
+				}
+			}
+			
+			sum += insts.size();
+		}
+		
+		if(changedMap != null){
+			for (List<WebService> list : IIT.values()) {
+				for (WebService ws : list) {
+
+					if(judgeNewOrDelete(changedMap, ws.getName(), "delete")){
+						Iterator<WebService> iterator = hasHandledWS.iterator();
+						
+						while(iterator.hasNext()){
+							WebService temp = iterator.next();
+							if(temp.getName().equals(ws.getName())){
+								iterator.remove();
+								break;
+							}
+						}
+						
+						Set<String> insts = new HashSet<String>();
+
+						if (ws.getOutputs() != null) {
+							for (String inst : (List<String>) ws.getOutputs()) {
+								insts.add(inst);
+								if (solveMap.get(inst) != null) {
+									insts.addAll(solveMap.get(inst));
+								}
+							}
+						}
+						
+						sum -= insts.size();
+					}else{
+						if (!hasHandledWS.add(ws)) {
+							continue;
+						}
+
+						Set<String> insts = new HashSet<String>();
+
+						if (ws.getOutputs() != null) {
+							for (String inst : (List<String>) ws.getOutputs()) {
+								insts.add(inst);
+								if (solveMap.get(inst) != null) {
+									insts.addAll(solveMap.get(inst));
+								}
+							}
+						}
+						sum += insts.size();
+					}
+				}
+			}
+		}
+		
+		int size = hasHandledWS.size();
+		
+		System.out.println("average global outputs:" + sum/size);
+		PrintStatisticResult.getInstance().print(sum/size + ",");
+	}
+	/**
+	 * 统计全局拓扑中的平均宽度(不算上可匹配)
+	 * @param changedMap 
+	 */
+	public void statisticAvgGlobalOutputsNoMatch(Map<String, List<WebService>> changedMap){
+		Set<WebService> hasHandledWS = new HashSet<WebService>();
+		
+		double sum = 0;
+		
+		for(WebService ws : serviceMap.values()){
+			if (!hasHandledWS.add(ws)) {
+				continue;
+			}
+			
+			Set<String> insts = new HashSet<String>();
+			
+			if(ws.getOutputs() != null){
+				insts.addAll(ws.getOutputs());
+			}
+			
+			sum += insts.size();
+		}
+		
+		if(changedMap != null){
+			for (List<WebService> list : IIT.values()) {
+				for (WebService ws : list) {
+
+					if(judgeNewOrDelete(changedMap, ws.getName(), "delete")){
+						Iterator<WebService> iterator = hasHandledWS.iterator();
+						
+						while(iterator.hasNext()){
+							WebService temp = iterator.next();
+							if(temp.getName().equals(ws.getName())){
+								iterator.remove();
+								break;
+							}
+						}
+						
+						Set<String> insts = new HashSet<String>();
+
+						if(ws.getOutputs() != null){
+							insts.addAll(ws.getOutputs());
+						}
+						sum -= insts.size();
+					}
+					else{
+						if (!hasHandledWS.add(ws)) {
+							continue;
+						}
+
+						Set<String> insts = new HashSet<String>();
+
+						if(ws.getOutputs() != null){
+							insts.addAll(ws.getOutputs());
+						}
+						sum += insts.size();
+					}
+				}
+			}
+		}
+		
+		int size = hasHandledWS.size();
+		
+		System.out.println("average global outputs(no match):" + sum/size);
+		PrintStatisticResult.getInstance().print(sum/size + ",");
+	}
+
+	public void statisticOneLevel(boolean reachFlag){
+		ws2NextWSNumBeans.clear();
+		rankMap.clear();
+		
+		for(WebService ws : serviceMap.values()){
+			
+			if(reachFlag){
+				if(ws.getCount() != 0){
+					continue;
+				}
+			}
+			
+			WS2NextWSNumBean ws2NextWSNumBean = new WS2NextWSNumBean();
+			ws2NextWSNumBean.setWsName(ws.getName());
+			
+			//找出可以output的所有inst
+			Set<String> insts = new HashSet<String>();
+			
+			if(ws.getOutputs() != null){
+				for(String inst : (List<String>)ws.getOutputs()){
+					insts.add(inst);
+					if(solveMap.get(inst) != null){
+						insts.addAll(solveMap.get(inst));
+					}
+				}
+			}
+			
+			//找出所有可能的波及点
+			Set<WebService> webServices = new HashSet<WebService>();
+			
+			Iterator<String> iterator = insts.iterator();
+			
+			while(iterator.hasNext()){
+				String inst = iterator.next();
+				
+				if(IIT.get(inst) != null){
+					if(reachFlag){
+						for(WebService temp : IIT.get(inst)){
+							if(temp.getCount() == 0 && temp != ws){
+								webServices.add(temp);
+							}
+						}
+					}
+					else{
+						webServices.addAll(IIT.get(inst));
+					}
+				}
+			}
+			
+			//找到了
+			ws2NextWSNumBean.setNextWSNum(webServices.size());
+			
+			ws2NextWSNumBeans.add(ws2NextWSNumBean);
+			rankMap.put(ws2NextWSNumBean.getWsName(), ws2NextWSNumBean.getNextWSNum());
+		}
+		//排序
+		Collections.sort(ws2NextWSNumBeans);
+		Collections.reverse(ws2NextWSNumBeans);
+		
+		if(reachFlag){
+			PrintRankResult.getInstance().print("前20排名" + System.lineSeparator());
+		}
+		else{
+			PrintRankResult.getInstance().print("全局" + System.lineSeparator());
+		}
+		
+		//输出前全部到文件
+		for(int i = 0; i < ws2NextWSNumBeans.size(); i++){
+			PrintRankResult.getInstance().print
+					((i + 1) + "," +  ws2NextWSNumBeans.get(i).toString() + System.lineSeparator());
+		}
+		
+	}
 }

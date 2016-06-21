@@ -280,70 +280,77 @@ public class DataGetter {
 		return result;
 	}
 
-	public static List<Map<String, List<WebService>>> readChanged(Map<String, WebService> serviceMap) throws Exception {
-		File file = new File("changedServices31.csv");
-		System.out.println(file.exists());
+	public static Map<String, List<WebService>> readChanged(Map<String, WebService> serviceMap, int fileNum,
+			int runTimes) throws Exception {
+		File file = new File("result2/changedServices" + fileNum + ".csv");
 		Scanner scanner = new Scanner(file);
-		List<Map<String, List<WebService>>> result = new ArrayList<Map<String, List<WebService>>>();
-
+		Map<String, List<WebService>> wsMap = new HashMap<String, List<WebService>>();
+		int times = 0;
+		
+		wsMap.put("new", new ArrayList<WebService>());
+		wsMap.put("qosChange", new ArrayList<WebService>());
+		wsMap.put("delete", new ArrayList<WebService>());
+		
 		while (scanner.hasNext()) {
-			Map<String, List<WebService>> wsMap = new HashMap<String, List<WebService>>();
-			wsMap.put("new", new ArrayList<WebService>());
-			wsMap.put("qosChange", new ArrayList<WebService>());
-			wsMap.put("delete", new ArrayList<WebService>());
-
+			
 			String group = scanner.nextLine();
-			// 都某一族数据
+
+			// 移动到某一组数据的开始位置
 			if (group.startsWith("第")) {
-				String s = scanner.nextLine();
-				while (!"".equals(s)) {
-					String[] ss = s.split(",", 2);
-					if ("new".equals(ss[0])) {
-						String name = ss[1].split(",", 2)[0];
-						String body = ss[1].split(",", 2)[1];
-						String qos = body.split(",", 3)[0];
-						String resp = body.split(",", 3)[1];
-						String inout = body.split(",", 3)[2];
-
-						String[] in = inout.split(",", 2)[0].split(":");
-						String[] out = { "" };
-						if (inout.split(",", 2).length == 2) {
-							out = inout.split(",", 2)[1].split(":");
-						}
-						List<String> input = Arrays.asList(in);
-						List<String> output = Arrays.asList(out);
-
-						WebService ws = new WebService();
-						ws.setCount(input.size());
-						ws.setInputs(input);
-						ws.setName(name);
-						ws.setOutputs(output);
-						ws.setSelfResponseTime(Double.parseDouble(qos));
-						ws.setAllResponseTime(Double.parseDouble(resp));
-
-						wsMap.get("new").add(ws);
-					} else if ("qosChange".equals(ss[0])) {
-						String name = ss[1].split(",", 2)[0];
-						String qos = ss[1].split(",", 2)[1];
-						WebService ws = serviceMap.get(name);
-						ws.setNewAllResponseTime(
-								ws.getAllResponseTime() - ws.getSelfResponseTime() + Double.parseDouble(qos));
-						ws.setSelfResponseTime(Double.parseDouble(qos));
-						wsMap.get("qosChange").add(ws);
-					} else if ("delete".equals(ss[0])) {
-						String name = ss[1];
-						WebService ws = serviceMap.get(name);
-						wsMap.get("delete").add(ws);
-					}
-					s = scanner.nextLine();
+				if(times == runTimes){
+					break;
 				}
+				
+				times ++;
 			}
-			result.add(wsMap);
+			
+		}
+
+		String s = scanner.nextLine();
+		while (!"".equals(s)) {
+			String[] ss = s.split(",", 2);
+			if ("new".equals(ss[0])) {
+				String name = ss[1].split(",", 2)[0];
+				String body = ss[1].split(",", 2)[1];
+				String qos = body.split(",", 3)[0];
+				String resp = body.split(",", 3)[1];
+				String inout = body.split(",", 3)[2];
+
+				String[] in = inout.split(",", 2)[0].split(":");
+				String[] out = { "" };
+				if (inout.split(",", 2).length == 2) {
+					out = inout.split(",", 2)[1].split(":");
+				}
+				List<String> input = Arrays.asList(in);
+				List<String> output = Arrays.asList(out);
+
+				WebService ws = new WebService();
+				ws.setCount(input.size());
+				ws.setInputs(input);
+				ws.setName(name);
+				ws.setOutputs(output);
+				ws.setSelfResponseTime(Double.parseDouble(qos));
+				ws.setAllResponseTime(Double.parseDouble(resp));
+
+				wsMap.get("new").add(ws);
+			} else if ("qosChange".equals(ss[0])) {
+				String name = ss[1].split(",", 2)[0];
+				String qos = ss[1].split(",", 2)[1];
+				WebService ws = serviceMap.get(name);
+				ws.setNewAllResponseTime(ws.getAllResponseTime() - ws.getSelfResponseTime() + Double.parseDouble(qos));
+				ws.setSelfResponseTime(Double.parseDouble(qos));
+				wsMap.get("qosChange").add(ws);
+			} else if ("delete".equals(ss[0])) {
+				String name = ss[1];
+				WebService ws = serviceMap.get(name);
+				wsMap.get("delete").add(ws);
+			}
+			s = scanner.nextLine();
 		}
 
 		scanner.close();
 
-		return result;
+		return wsMap;
 	}
 
 	public static Map<String , Double> readQOSChanged(){
